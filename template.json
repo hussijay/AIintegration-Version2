@@ -1,0 +1,236 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "workflows_ChatGPTIntigrationV2_name": {
+            "defaultValue": "ChatGPTIntigrationV2",
+            "type": "String"
+        },
+        "connections_MicrosoftSentinel_ChatGPTIntigrationV2_externalid": {
+            "defaultValue": "/subscriptions/a9757d3d-1853-43b8-8591-ffcb89bd1cb8/resourceGroups/SIEM/providers/Microsoft.Web/connections/MicrosoftSentinel-ChatGPTIntigrationV2",
+            "type": "String"
+        },
+        "connections_openaiip_2_externalid": {
+            "defaultValue": "/subscriptions/a9757d3d-1853-43b8-8591-ffcb89bd1cb8/resourceGroups/SIEM/providers/Microsoft.Web/connections/openaiip-2",
+            "type": "String"
+        }
+    },
+    "variables": {},
+    "resources": [
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('workflows_ChatGPTIntigrationV2_name')]",
+            "location": "eastus",
+            "tags": {
+                "hidden-SentinelTemplateName": "ChatGPTdemo1",
+                "hidden-SentinelTemplateVersion": "1.0"
+            },
+            "identity": {
+                "type": "SystemAssigned"
+            },
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "Microsoft_Sentinel_incident": {
+                            "type": "ApiConnectionWebhook",
+                            "inputs": {
+                                "body": {
+                                    "callback_url": "@{listCallbackUrl()}"
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                    }
+                                },
+                                "path": "/incident-creation"
+                            }
+                        }
+                    },
+                    "actions": {
+                        "Add_comment_to_incident_(V3)": {
+                            "runAfter": {
+                                "GPT3_-_Tactics_and_techniques_desciption": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "body": {
+                                    "incidentArmId": "@triggerBody()?['object']?['id']",
+                                    "message": "<p>Tactics and techniques related to Incident @{triggerBody()?['object']?['properties']?['title']}: @{body('GPT3_-_Tactics_and_techniques_desciption')?['choices']}</p>"
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/Incidents/Comment"
+                            }
+                        },
+                        "For_each": {
+                            "foreach": "@body('GPT3_-_Add_Task_to_Incident')?['choices']",
+                            "actions": {
+                                "Add_task_to_incident": {
+                                    "runAfter": {},
+                                    "type": "ApiConnection",
+                                    "inputs": {
+                                        "body": {
+                                            "incidentArmId": "@triggerBody()?['object']?['id']",
+                                            "taskDescription": "<p>@{items('For_each')?['text']}</p>",
+                                            "taskTitle": "Task from ChatGPT"
+                                        },
+                                        "host": {
+                                            "connection": {
+                                                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                            }
+                                        },
+                                        "method": "post",
+                                        "path": "/Incidents/CreateTask"
+                                    }
+                                },
+                                "For_each_2": {
+                                    "foreach": "@body('GPT3_-_generate_KQL')?['choices']",
+                                    "actions": {
+                                        "Add_task_to_incident_2": {
+                                            "runAfter": {},
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "body": {
+                                                    "incidentArmId": "@triggerBody()?['object']?['id']",
+                                                    "taskDescription": "<p>@{items('For_each_2')?['text']}</p>",
+                                                    "taskTitle": "Example KQL queries:"
+                                                },
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "path": "/Incidents/CreateTask"
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {
+                                        "GPT3_-_generate_KQL": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Foreach"
+                                },
+                                "GPT3_-_generate_KQL": {
+                                    "runAfter": {
+                                        "Add_task_to_incident": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "ApiConnection",
+                                    "inputs": {
+                                        "body": {
+                                            "best_of": 1,
+                                            "frequency_penalty": 0,
+                                            "max_tokens": 100,
+                                            "n": 1,
+                                            "presence_penalty": 0,
+                                            "prompt": "Generate Microsoft Sentinel KQL query to implement thi suggestion: \"@{items('For_each')?['text']}",
+                                            "temperature": 1
+                                        },
+                                        "host": {
+                                            "connection": {
+                                                "name": "@parameters('$connections')['openaiip_1']['connectionId']"
+                                            }
+                                        },
+                                        "method": "post",
+                                        "path": "/v1/engines/@{encodeURIComponent('gpt-3.5-turbo-instruct')}/completions"
+                                    }
+                                }
+                            },
+                            "runAfter": {
+                                "GPT3_-_Add_Task_to_Incident": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach"
+                        },
+                        "GPT3_-_Add_Task_to_Incident": {
+                            "runAfter": {},
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "body": {
+                                    "best_of": 1,
+                                    "frequency_penalty": 0,
+                                    "max_tokens": 300,
+                                    "n": 1,
+                                    "presence_penalty": 0,
+                                    "prompt": "What task do you recommend to investigate security incident @{triggerBody()?['object']?['properties']?['title']}, Considering incident description \"@{triggerBody()?['object']?['properties']?['description']}\" and related entities @{triggerBody()?['object']?['properties']?['relatedEntities']}with Microsoft Sentinel?",
+                                    "temperature": 1
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['openaiip_1']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/v1/engines/@{encodeURIComponent('gpt-3.5-turbo-instruct')}/completions"
+                            }
+                        },
+                        "GPT3_-_Tactics_and_techniques_desciption": {
+                            "runAfter": {},
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "body": {
+                                    "best_of": 1,
+                                    "frequency_penalty": 0,
+                                    "max_tokens": 300,
+                                    "n": 1,
+                                    "presence_penalty": 0,
+                                    "prompt": "Describe following Mitre Attack tactics @{triggerBody()?['object']?['properties']?['additionalData']?['tactics']}",
+                                    "temperature": 1
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['openaiip_1']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/v1/engines/@{encodeURIComponent('gpt-3.5-turbo-instruct')}/completions"
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "azuresentinel": {
+                                "connectionId": "[parameters('connections_MicrosoftSentinel_ChatGPTIntigrationV2_externalid')]",
+                                "connectionName": "[concat('MicrosoftSentinel-', parameters('workflows_ChatGPTIntigrationV2_name'))]",
+                                "connectionProperties": {
+                                    "authentication": {
+                                        "type": "ManagedServiceIdentity"
+                                    }
+                                },
+                                "id": "/subscriptions/a9757d3d-1853-43b8-8591-ffcb89bd1cb8/providers/Microsoft.Web/locations/eastus/managedApis/Azuresentinel"
+                            },
+                            "openaiip_1": {
+                                "connectionId": "[parameters('connections_openaiip_2_externalid')]",
+                                "connectionName": "openaiip-2",
+                                "id": "/subscriptions/a9757d3d-1853-43b8-8591-ffcb89bd1cb8/providers/Microsoft.Web/locations/eastus/managedApis/openaiip"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}
